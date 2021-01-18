@@ -7,11 +7,10 @@ VERSION ?= $(shell (cat $(BASE)/.version 2> /dev/null) || (echo 'nightly-\c' && 
 GO      = go
 GODOC   = godoc
 GOFMT   = gofmt
-DEP     = dep
 
 .PHONY: all
-all: vendor a_main-packr.go lint fmt | $(BASE)
-	$Q cd $(BASE) && $(GO) build \
+all: a_main-packr.go lint fmt | $(BASE)
+	$(GO) build \
 	-v \
 	-tags release \
 	-ldflags '-X "main.Version=$(VERSION)" -X "main.BuildDate=$(DATE)"' \
@@ -20,36 +19,22 @@ all: vendor a_main-packr.go lint fmt | $(BASE)
 a_main-packr.go: $(GOPATH)/bin/packr
 	rm -rfv $(GOPATH)/src/golang.org/x/tools/go/loader/testdata; \
 	rm -rfv $(GOPATH)/src/golang.org/x/tools/cmd/fiximports/testdata; \
+	rm -rfv $(GOPATH)/src/golang.org/x/tools/internal/lsp/testdata; \
+	go clean -modcache; \
 	$(GOPATH)/bin/packr -z
+
 
 $(BASE):
 	@mkdir -p $(dir $@)
 	@ln -sf $(CURDIR) $@
 
-vendor: Gopkg.lock | $(BASE)
-	cd $(BASE) && $(DEP) ensure
-	for dep in `cd $(BASE)/vendor && find * -type d -maxdepth 3 -mindepth 2`; do \
-	echo "building $$dep"; \
-	go install -v $(PACKAGE)/vendor/$$dep > /dev/null 2>&1 || echo "not good" > /dev/null; \
-	done
-	mkdir -p $(GOPATH)/pkg/`go env GOOS`_`go env GOARCH`
-	cp -r $(GOPATH)/pkg/`go env GOOS`_`go env GOARCH`/$(PACKAGE)/vendor/* $(GOPATH)/pkg/`go env GOOS`_`go env GOARCH`
-	touch $@
-
-# # install packr with go get because dep doesn't build binaries for us
 $(GOPATH)/bin/packr:
-	$(GO) get -u github.com/gobuffalo/packr/...
+	cd $(GOPATH)/pkg/mod/github.com/gobuffalo/packr\@v1.26.1-0.20190624180515-bded308e56b4/ && $(GO) install ./packr
 
 # Tools
 
-.PHONY: packr
-packr: $(GOPATH)/bin/packr
-	rm -rfv $(GOPATH)/src/golang.org/x/tools/go/loader/testdata; \
-	rm -rfv $(GOPATH)/src/golang.org/x/tools/cmd/fiximports/testdata; \
-	$(GOPATH)/bin/packr -z
-
 .PHONY: lint
-lint: vendor | $(BASE) $(GOLINT)
+lint: $(BASE) $(GOLINT)
 	$Q cd $(BASE) && ret=0 && for pkg in $(PKGS); do \
 	test -z "$$($(GOLINT) $$pkg | tee /dev/stderr)" || ret=1 ; \
 	done ; exit $$ret
@@ -62,13 +47,15 @@ fmt:
 
 .PHONY: clean
 clean:
+	go clean -modcache
 	rm -rf bin .gopath vendor *-packr.go
 
 .PHONY: tests
-test: fmt lint vendor packr
-	cd $(BASE) && go test $(ARGS)
+test: fmt lint a_main-packr.go
+	go test $(ARGS)
 
 .PHONY: docker
 docker: Dockerfile bin/fhirbase-linux-amd64
-	docker build . -t fhirbase/fhirbase:$(VERSION) && \
-	docker push fhirbase/fhirbase:$(VERSION)
+	docker build . -t fhirbase/fhirbase:$(VERSION) -t fhirbase/fhirbase:latest && \
+	docker push fhirbase/fhirbase:$(VERSION) && \
+	docker push fhirbase/fhirbase:latest
